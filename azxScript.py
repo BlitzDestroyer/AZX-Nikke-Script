@@ -1,12 +1,43 @@
+from __future__ import annotations
+
+import ctypes
+import threading
+from typing import TypeAlias, cast
+
 import keyboard
 import mss
 import numpy as np
 import cv2
-import threading
-import sys
 from PyQt5 import QtCore, QtGui, QtWidgets
-import ctypes
 from PyQt5.QtWidgets import QApplication
+
+RGBA: TypeAlias = tuple[int, int, int, int]
+Matrix: TypeAlias = list[list[int | str]]
+
+RED_CHAR = "\u25A1"
+RED_COLOR: RGBA = (255, 0, 0, 200)
+RED_PASTEL_CHAR = "\u25A0"
+RED_PASTEL_COLOR: RGBA = (255, 0, 0, 70)
+GREEN_CHAR = "\u25BA"
+GREEN_COLOR: RGBA = (0, 255, 0, 200)
+GREEN_PASTEL_CHAR = "\u2192"
+GREEN_PASTEL_COLOR: RGBA = (0, 255, 0, 70)
+BLUE_CHAR = "\u25BC"
+BLUE_COLOR: RGBA = (0, 0, 255, 200)
+BLUE_PASTEL_CHAR = "\u2193"
+BLUE_PASTEL_COLOR: RGBA = (0, 0, 255, 70)
+BLACK_COLOR: RGBA = (0, 0, 0, 0)
+
+MAX_SUMMABLE_VALUE = 10
+
+CHAR_COLOR_MAP: dict[str, RGBA] = {
+    RED_CHAR: RED_COLOR,
+    RED_PASTEL_CHAR: RED_PASTEL_COLOR,
+    GREEN_CHAR: GREEN_COLOR,
+    GREEN_PASTEL_CHAR: GREEN_PASTEL_COLOR,
+    BLUE_CHAR: BLUE_COLOR,
+    BLUE_PASTEL_CHAR: BLUE_PASTEL_COLOR
+}
 
 class Overlay(QtWidgets.QWidget):
 
@@ -46,7 +77,7 @@ class Overlay(QtWidgets.QWidget):
             | 0x20     #WS_EX_TRANSPARENT
         )
 
-    def set_cells(self, cell_list):
+    def setCells(self, cell_list):
         self.cells = cell_list
         self.update()
 
@@ -73,23 +104,22 @@ offset_x = 51; offset_y = 52
 top_start = 221; left_start = 708 
 capture_area_w = 44; capture_area_h = 45
 
-numbers = []
-matrix = []
+numbers: list[int | str] = []
+matrix: Matrix = []
 
 start_area = {
     "top": top_start,
     "left": left_start,
     "width": capture_area_w,
     "height": capture_area_h
-    }
+}
 
-def get_matrix_numbers():
-
+def getMatrixNumbers():
     counter = 0
 
     with mss.mss() as sct:
-        for r in range(rows):
-            for c in range(columns):
+        for _ in range(rows):
+            for _ in range(columns):
                 counter += 1
 
                 image = sct.grab(start_area)
@@ -135,12 +165,11 @@ def get_matrix_numbers():
     createMatrix()
 
 def createMatrix():
-
     pos = 0
 
-    for i in range(rows):
-        row = []
-        for j in range(columns):
+    for _ in range(rows):
+        row: list[int | str] = []
+        for _ in range(columns):
             row.append(numbers[pos])
             pos += 1
         matrix.append(row)
@@ -155,87 +184,84 @@ def printMatrix():
             print(matrix[i][j], end="  ")
         print()
 
-def checkRight(columns, r, c, matrix):
+def checkRight(columns: int, r: int, c: int, matrix: Matrix) -> tuple[bool, int]:
     sum = 0
     for j in range(columns - c):
 
         if c + j > columns:
             return False, 0
 
-        if (has_special_char(r, c + j)):
+        if (hasSpecialChar(r, c + j)):
             continue
         else:
-            sum += matrix[r][c + j]
+            # Safety: hasSpecialChar will filter out non-integer values
+            sum += cast(int, matrix[r][c + j])
 
-        if sum > 10:
+        if sum > MAX_SUMMABLE_VALUE:
             return False, 0
-        elif sum == 10:
+        elif sum == MAX_SUMMABLE_VALUE:
             return True, j
         
     return False, 0
 
-def sums_right():
-
+def sumsRight():
     for r in range(rows):
         for c in range(columns):
-            
-            if has_special_char(r,c):
+            if hasSpecialChar(r,c):
                 continue
 
             validSum, positions = checkRight(columns, r, c, matrix)
 
             if validSum:
                 for x in range(1, positions + 1):
-                    matrix[r][c] = "\u25BA"
-                    matrix[r][c + x] = "\u2192"
+                    matrix[r][c + x] = GREEN_PASTEL_CHAR
+                matrix[r][c] = GREEN_CHAR
 
     printMatrix()
-    update_overlay()
+    updateOverlay()
 
-def checkDown(rows, r, c, matrix):
+def checkDown(rows: int, r: int, c: int, matrix: Matrix) -> tuple[bool, int]:
     sum = 0
 
     for j in range(rows - r):
-
         if r + j > rows:
             return False, 0
 
-        if has_special_char(r + j, c):
+        if hasSpecialChar(r + j, c):
             continue
         else:
-            sum += matrix[r + j][c]
+            # Safety: hasSpecialChar will filter out non-integer values
+            sum += cast(int, matrix[r + j][c])
 
-        if sum > 10:
+        if sum > MAX_SUMMABLE_VALUE:
             return False, 0
-        elif sum == 10:
+        elif sum == MAX_SUMMABLE_VALUE:
             return True, j
         
     return False, 0
 
-def sums_down():
+def sumsDown():
     positions = 0
     for c in range(columns):
         for r in range(rows):
-            
-            if has_special_char(r,c):
+            if hasSpecialChar(r,c):
                 continue
 
             validSum, positions = checkDown(rows, r, c, matrix)
 
             if validSum:
                 for x in range(1, positions + 1):
-                    matrix[r][c] = "\u25BC"
-                    matrix[x + r][c] = "\u2193"
+                    matrix[x + r][c] = BLUE_PASTEL_CHAR
+                matrix[r][c] = BLUE_CHAR
     
     printMatrix()
-    update_overlay()
+    updateOverlay()
 
-def checkSquareUp(rows, columns, start_r, start_c, matrix):
-
+def checkSquareUp(rows: int, columns: int, start_r: int, start_c: int, matrix: Matrix) -> tuple[bool, int, int]:
     if start_r <= 0 or start_c >= columns:
         return False, 0, 0
 
-    if has_special_char(start_r, start_c):
+    if hasSpecialChar(start_r, start_c):
         return False, 0, 0
 
     edge_rows = start_r - 1 
@@ -243,18 +269,17 @@ def checkSquareUp(rows, columns, start_r, start_c, matrix):
     area = 1
 
     while edge_rows >= 0 and edge_columns < columns:
-
         sum = 0
 
         for r in range(edge_rows, start_r + 1):
             for c in range(start_c, edge_columns + 1):
-                if not has_special_char(r, c):
+                if not hasSpecialChar(r, c):
                     sum += int(matrix[r][c])
 
-        if sum > 10:
+        if sum > MAX_SUMMABLE_VALUE:
             return False, 0, 0
 
-        if sum == 10:
+        if sum == MAX_SUMMABLE_VALUE:
             return True, edge_rows, edge_columns
 
         if edge_columns >= columns or edge_rows < 0:
@@ -267,13 +292,13 @@ def checkSquareUp(rows, columns, start_r, start_c, matrix):
             current_col += 1
 
             for r in range(edge_rows, start_r + 1):
-                if not has_special_char(r, current_col):
+                if not hasSpecialChar(r, current_col):
                     sum_col += int(matrix[r][current_col])
 
-            if sum_col > 10:
+            if sum_col > MAX_SUMMABLE_VALUE:
                 break
 
-            if sum_col == 10:
+            if sum_col == MAX_SUMMABLE_VALUE:
                 return True, edge_rows, current_col
 
         current_row = edge_rows
@@ -283,13 +308,13 @@ def checkSquareUp(rows, columns, start_r, start_c, matrix):
             current_row -= 1
 
             for c in range(start_c, edge_columns + 1):
-                if not has_special_char(current_row, c):
+                if not hasSpecialChar(current_row, c):
                     sum_row += int(matrix[current_row][c])
 
-            if sum_row > 10:
+            if sum_row > MAX_SUMMABLE_VALUE:
                 break
 
-            if sum_row == 10:
+            if sum_row == MAX_SUMMABLE_VALUE:
                 return True, current_row, edge_columns
 
         edge_rows -= 1
@@ -298,30 +323,28 @@ def checkSquareUp(rows, columns, start_r, start_c, matrix):
 
     return False, 0, 0
 
-def checkSquareDown(rows, columns, start_r, start_c, matrix):
-
+def checkSquareDown(rows: int, columns: int, start_r: int, start_c: int, matrix: Matrix) -> tuple[bool, int, int]:
     if start_r >= rows or start_c >= columns:
         return False, 0, 0
 
-    if has_special_char(start_r, start_c):
+    if hasSpecialChar(start_r, start_c):
         return False, 0, 0
 
     edge_rows = start_r + 1; edge_columns = start_c + 1
     area = 1
 
     while edge_rows < rows and edge_columns < columns:
-
         sum = 0
 
         for r in range(start_r, edge_rows + 1):
             for c in range(start_c, edge_columns + 1):
-                if not has_special_char(r, c):
+                if not hasSpecialChar(r, c):
                     sum += int(matrix[r][c])
 
-        if sum > 10:
+        if sum > MAX_SUMMABLE_VALUE:
             return False, 0, 0
 
-        if sum == 10:
+        if sum == MAX_SUMMABLE_VALUE:
             return True, edge_rows, edge_columns
 
 
@@ -335,13 +358,13 @@ def checkSquareDown(rows, columns, start_r, start_c, matrix):
             current_col += 1
 
             for r in range(start_r, edge_rows + 1):
-                if not has_special_char(r, current_col):
+                if not hasSpecialChar(r, current_col):
                     sum_col += int(matrix[r][current_col])
 
-            if sum_col > 10:
+            if sum_col > MAX_SUMMABLE_VALUE:
                 break
 
-            if sum_col == 10:
+            if sum_col == MAX_SUMMABLE_VALUE:
                 return True, edge_rows, current_col
 
         current_row = edge_rows
@@ -351,13 +374,13 @@ def checkSquareDown(rows, columns, start_r, start_c, matrix):
             current_row += 1
 
             for c in range(start_c, edge_columns + 1):
-                if not has_special_char(current_row, c):
+                if not hasSpecialChar(current_row, c):
                     sum_row += int(matrix[current_row][c])
 
-            if sum_row > 10:
+            if sum_row > MAX_SUMMABLE_VALUE:
                 break
 
-            if sum_row == 10:
+            if sum_row == MAX_SUMMABLE_VALUE:
                 return True, current_row, edge_columns
 
         edge_rows += 1
@@ -366,87 +389,90 @@ def checkSquareDown(rows, columns, start_r, start_c, matrix):
 
     return False, 0, 0
 
-def sums_square():
+def sumsSquare():
     for r in range(rows):
         for c in range(columns):
-
-            if has_special_char(r, c):
+            if hasSpecialChar(r, c):
                 continue
             
             validSumDown, max_r, max_c = checkSquareDown(rows, columns, r, c, matrix)
-            
             if validSumDown:
                 for j in range(r, max_r + 1):
                     for k in range(c, max_c + 1):
-                        matrix[j][k] = "\u25A0"
-                matrix[r][c] = "\u25A1"
-            else:
-                validSumUp, max_r, max_c = checkSquareUp(rows, columns, r, c, matrix)
-                if validSumUp:
-                    for j in range(r, max_r - 1, -1):
-                        for k in range(c, max_c + 1):
-                            matrix[j][k] = "\u25A0"
-                    matrix[r][c] = "\u25A1"
+                        matrix[j][k] = RED_PASTEL_CHAR
+                matrix[r][c] = RED_CHAR
+                continue
+            
+            validSumUp, max_r, max_c = checkSquareUp(rows, columns, r, c, matrix)
+            if validSumUp:
+                for j in range(r, max_r - 1, -1):
+                    for k in range(c, max_c + 1):
+                        matrix[j][k] = RED_PASTEL_CHAR
+                matrix[r][c] = RED_CHAR
 
     printMatrix()
-    update_overlay()
+    updateOverlay()
 
-def has_special_char(r, c):
-    if matrix[r][c] == "\u2192" or matrix[r][c] == "\u2193" or matrix[r][c] == "\u25A0" or matrix[r][c] == "\u25A1" or matrix[r][c] == "\u25BA" or matrix[r][c] == "\u25BC" or matrix[r][c] == " ":
-        return True
-    return False
+def hasSpecialChar(r: int, c: int) -> bool:
+    return matrix[r][c] in (RED_CHAR, RED_PASTEL_CHAR, GREEN_CHAR, GREEN_PASTEL_CHAR, BLUE_CHAR, BLUE_PASTEL_CHAR, " ")
+    # if matrix[r][c] == "\u2192" or matrix[r][c] == "\u2193" or matrix[r][c] == "\u25A0" or matrix[r][c] == "\u25A1" or matrix[r][c] == "\u25BA" or matrix[r][c] == "\u25BC" or matrix[r][c] == " ":
+    #     return True
+    # return False
 
-def clean_matrix():
+def cleanSpecialCharactersFromMatrix():
     for r in range(rows):
         for c in range(columns):
-
-            if has_special_char(r, c):
+            if hasSpecialChar(r, c):
                 matrix[r][c] = " "
             else:
                 continue
 
     print("Cleaned special characters from matrix: ")
     printMatrix()
-    update_overlay()
+    updateOverlay()
 
-def update_overlay():
-    cell_list = []
+def updateOverlay():
+    cell_list: list[tuple[int, int, RGBA]] = []
 
     for r in range(rows):
         for c in range(columns):
-
             value = matrix[r][c]
 
-            if value == "\u25A0":
-                cell_list.append((r, c, (255, 0, 0, 70)))
-            elif value == "\u25A1":
-                cell_list.append((r, c, (255, 0, 0, 200)))
-            elif value =="\u2192":
-                cell_list.append((r, c, (0, 255, 0, 70)))
-            elif value =="\u2193":
-                cell_list.append((r, c, (0, 0, 255, 70)))
-            elif value =="\u25BA":
-                cell_list.append((r, c, (0, 255, 0, 200)))
-            elif value =="\u25BC":
-                cell_list.append((r, c, (0, 0, 255, 200)))
-            elif value ==" ":
-                cell_list.append((r, c, (0, 0, 0, 0)))
+            if isinstance(value, int):
+                continue
 
-    overlay.set_cells(cell_list)
+            color = CHAR_COLOR_MAP.get(value, BLACK_COLOR)
+            cell_list.append((r, c, color))
+            # if value == "\u25A0":
+            #     cell_list.append((r, c, (255, 0, 0, 70)))
+            # elif value == "\u25A1":
+            #     cell_list.append((r, c, (255, 0, 0, 200)))
+            # elif value =="\u2192":
+            #     cell_list.append((r, c, (0, 255, 0, 70)))
+            # elif value =="\u2193":
+            #     cell_list.append((r, c, (0, 0, 255, 70)))
+            # elif value =="\u25BA":
+            #     cell_list.append((r, c, (0, 255, 0, 200)))
+            # elif value =="\u25BC":
+            #     cell_list.append((r, c, (0, 0, 255, 200)))
+            # elif value ==" ":
+            #     cell_list.append((r, c, (0, 0, 0, 0)))
+
+    overlay.setCells(cell_list)
 
 
-def start_logic():
+def configureHotkeys():
     print("f1. clean matrix")
     print("f2. sums right")
     print("f3. sums down")
     print("f4. sums square")
     print("f5. scan matrix")
 
-    keyboard.add_hotkey('f5', get_matrix_numbers)
-    keyboard.add_hotkey('f3', sums_down)
-    keyboard.add_hotkey('f2', sums_right)
-    keyboard.add_hotkey('f4', sums_square)
-    keyboard.add_hotkey('f1', clean_matrix)
+    keyboard.add_hotkey('f5', getMatrixNumbers)
+    keyboard.add_hotkey('f3', sumsDown)
+    keyboard.add_hotkey('f2', sumsRight)
+    keyboard.add_hotkey('f4', sumsSquare)
+    keyboard.add_hotkey('f1', cleanSpecialCharactersFromMatrix)
 
     keyboard.add_hotkey("esc", lambda: QtWidgets.QApplication.quit())
     
@@ -462,7 +488,7 @@ if __name__ == "__main__":
         capture_area_w, capture_area_h
     )
 
-    logic_thread = threading.Thread(target=start_logic, daemon=True)
+    logic_thread = threading.Thread(target=configureHotkeys, daemon=True)
     logic_thread.start()
 
     app.exec_()
