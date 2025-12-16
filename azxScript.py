@@ -12,7 +12,8 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtWidgets import QApplication
 
 RGBA: TypeAlias = tuple[int, int, int, int]
-Matrix: TypeAlias = list[list[int | str]]
+MatrixRow: TypeAlias = list[int | str]
+Matrix: TypeAlias = list[MatrixRow]
 
 RED_CHAR = "\u25A1"
 RED_COLOR: RGBA = (255, 0, 0, 200)
@@ -28,7 +29,9 @@ BLUE_PASTEL_CHAR = "\u2193"
 BLUE_PASTEL_COLOR: RGBA = (0, 0, 255, 70)
 BLACK_COLOR: RGBA = (0, 0, 0, 0)
 
-MAX_SUMMABLE_VALUE = 10
+TARGET_VALUE = 10
+CAPTURE_WIDTH = 44
+CAPTURE_HEIGHT = 45
 
 CHAR_COLOR_MAP: dict[str, RGBA] = {
     RED_CHAR: RED_COLOR,
@@ -58,11 +61,12 @@ class Overlay(QtWidgets.QWidget):
         self.cells = []
 
         self.setWindowFlags(
-            QtCore.Qt.FramelessWindowHint |
-            QtCore.Qt.WindowStaysOnTopHint |
-            QtCore.Qt.Tool
+            cast(QtCore.Qt.WindowFlags,
+            QtCore.Qt.WindowType.FramelessWindowHint |
+            QtCore.Qt.WindowType.WindowStaysOnTopHint |
+            QtCore.Qt.WindowType.Tool)
         )
-        self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
 
         self.setGeometry(0, 0, 1920, 1080)
 
@@ -96,71 +100,94 @@ class Overlay(QtWidgets.QWidget):
 
 #rows and columns from the level
 
-rows = 16; columns = 10
+rows = 16
+columns = 10
 
 #pixels
 
-offset_x = 51; offset_y = 52
-top_start = 221; left_start = 708 
-capture_area_w = 44; capture_area_h = 45
+offset_x = 51
+offset_y = 52
+top_start = 221
+left_start = 708 
+capture_area_w = 44
+capture_area_h = 45
 
 numbers: list[int | str] = []
 matrix: Matrix = []
 
-start_area = {
-    "top": top_start,
-    "left": left_start,
-    "width": capture_area_w,
-    "height": capture_area_h
-}
+# start_area = {
+#     "top": top_start,
+#     "left": left_start,
+#     "width": capture_area_w,
+#     "height": capture_area_h
+# }
 
-def getMatrixNumbers():
+def scanMatrix():
+    getMatrixNumbers(top_start, left_start, rows, columns)
+
+def getMatrixNumbers(top: int, left: int, rows: int, columns: int):
+    start_area = {
+        "top": top,
+        "left": left,
+        "width": columns * offset_x,
+        "height": rows * offset_y
+    }
+
+    # Pre-process templates
+    templates: list[np.ndarray | None] = []
+    for i in range(1, 10):
+        template_path = f"./templates/T{i}.png"
+        template = cv2.imread(template_path)
+        if template is None:
+            print(f"Couldn't load template: {template_path}")
+            templates.append(None)
+            continue
+
+        template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        templates.append(template_gray)
+    
     counter = 0
-
     with mss.mss() as sct:
-        for _ in range(rows):
-            for _ in range(columns):
-                counter += 1
+        image = sct.grab(start_area)
+    img_np = np.array(image)
+    img_gray = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY)
+    for row in range(rows):
+        row_offset = row * offset_y
+        for col in range(columns):
+            col_offset = col * offset_x
+            counter += 1
 
-                image = sct.grab(start_area)
+            tile = img_gray[row_offset:row_offset + CAPTURE_HEIGHT, col_offset:col_offset + CAPTURE_WIDTH]
 
-                img_np = np.array(image)
-                img_gray = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY)
+            best_score = -1.0 
+            best_match_digit = -1
 
-                img_np = np.array(image)
+            for j in range(1, 10):
+                temp_gray = templates[j - 1]
+                if temp_gray is None:
+                    print("Template not loaded")
+                    continue
 
-                best_score = -10 
-                best_match_digit = -1
+                res = cv2.matchTemplate(tile, temp_gray, cv2.TM_CCOEFF_NORMED)
+                min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+                print(f"[{row}][{col}] Testing {j} with score ({min_val}, {max_val})")
 
-                for j in range(1, 10):
-                    template_path = f"./templates/T{j}.png"
-                    template = cv2.imread(template_path)
+                current_score = max_val
 
-                    if template is None:
-                        print(f"Couldn't load template: {template_path}")
-                        continue
+                if current_score > best_score:
+                    best_score = current_score
+                    best_match_digit = j
+            
+            if best_match_digit != -1:
+                numbers.append(best_match_digit)
+            else:
+                print("No valid match, replacing with whitespace.")
+                numbers.append(" ")
 
-                    temp_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+            start_area["left"] += offset_x
 
-                    res = cv2.matchTemplate(img_gray, temp_gray, cv2.TM_CCOEFF_NORMED)
-                    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-
-                    current_score = max_val
-
-                    if current_score > best_score:
-                        best_score = current_score
-                        best_match_digit = j
-                
-                if best_match_digit != -1:
-                    numbers.append(best_match_digit)
-                else:
-                    print("Not valid match, replacing with whitespace.")
-                    numbers.append(" ")
-
-                start_area["left"] += offset_x
-
-            start_area["left"] = left_start
-            start_area["top"] += offset_y
+        start_area["left"] = left_start
+        start_area["top"] += offset_y
 
     createMatrix()
 
@@ -168,7 +195,7 @@ def createMatrix():
     pos = 0
 
     for _ in range(rows):
-        row: list[int | str] = []
+        row: MatrixRow = []
         for _ in range(columns):
             row.append(numbers[pos])
             pos += 1
@@ -187,7 +214,6 @@ def printMatrix():
 def checkRight(columns: int, r: int, c: int, matrix: Matrix) -> tuple[bool, int]:
     sum = 0
     for j in range(columns - c):
-
         if c + j > columns:
             return False, 0
 
@@ -197,14 +223,14 @@ def checkRight(columns: int, r: int, c: int, matrix: Matrix) -> tuple[bool, int]
             # Safety: hasSpecialChar will filter out non-integer values
             sum += cast(int, matrix[r][c + j])
 
-        if sum > MAX_SUMMABLE_VALUE:
+        if sum > TARGET_VALUE:
             return False, 0
-        elif sum == MAX_SUMMABLE_VALUE:
+        elif sum == TARGET_VALUE:
             return True, j
         
     return False, 0
 
-def sumsRight():
+def findSumsRight():
     for r in range(rows):
         for c in range(columns):
             if hasSpecialChar(r,c):
@@ -222,7 +248,6 @@ def sumsRight():
 
 def checkDown(rows: int, r: int, c: int, matrix: Matrix) -> tuple[bool, int]:
     sum = 0
-
     for j in range(rows - r):
         if r + j > rows:
             return False, 0
@@ -233,14 +258,14 @@ def checkDown(rows: int, r: int, c: int, matrix: Matrix) -> tuple[bool, int]:
             # Safety: hasSpecialChar will filter out non-integer values
             sum += cast(int, matrix[r + j][c])
 
-        if sum > MAX_SUMMABLE_VALUE:
+        if sum > TARGET_VALUE:
             return False, 0
-        elif sum == MAX_SUMMABLE_VALUE:
+        elif sum == TARGET_VALUE:
             return True, j
         
     return False, 0
 
-def sumsDown():
+def findSumsDown():
     positions = 0
     for c in range(columns):
         for r in range(rows):
@@ -276,10 +301,10 @@ def checkSquareUp(rows: int, columns: int, start_r: int, start_c: int, matrix: M
                 if not hasSpecialChar(r, c):
                     sum += int(matrix[r][c])
 
-        if sum > MAX_SUMMABLE_VALUE:
+        if sum > TARGET_VALUE:
             return False, 0, 0
 
-        if sum == MAX_SUMMABLE_VALUE:
+        if sum == TARGET_VALUE:
             return True, edge_rows, edge_columns
 
         if edge_columns >= columns or edge_rows < 0:
@@ -295,10 +320,10 @@ def checkSquareUp(rows: int, columns: int, start_r: int, start_c: int, matrix: M
                 if not hasSpecialChar(r, current_col):
                     sum_col += int(matrix[r][current_col])
 
-            if sum_col > MAX_SUMMABLE_VALUE:
+            if sum_col > TARGET_VALUE:
                 break
 
-            if sum_col == MAX_SUMMABLE_VALUE:
+            if sum_col == TARGET_VALUE:
                 return True, edge_rows, current_col
 
         current_row = edge_rows
@@ -311,10 +336,10 @@ def checkSquareUp(rows: int, columns: int, start_r: int, start_c: int, matrix: M
                 if not hasSpecialChar(current_row, c):
                     sum_row += int(matrix[current_row][c])
 
-            if sum_row > MAX_SUMMABLE_VALUE:
+            if sum_row > TARGET_VALUE:
                 break
 
-            if sum_row == MAX_SUMMABLE_VALUE:
+            if sum_row == TARGET_VALUE:
                 return True, current_row, edge_columns
 
         edge_rows -= 1
@@ -341,10 +366,10 @@ def checkSquareDown(rows: int, columns: int, start_r: int, start_c: int, matrix:
                 if not hasSpecialChar(r, c):
                     sum += int(matrix[r][c])
 
-        if sum > MAX_SUMMABLE_VALUE:
+        if sum > TARGET_VALUE:
             return False, 0, 0
 
-        if sum == MAX_SUMMABLE_VALUE:
+        if sum == TARGET_VALUE:
             return True, edge_rows, edge_columns
 
 
@@ -361,10 +386,10 @@ def checkSquareDown(rows: int, columns: int, start_r: int, start_c: int, matrix:
                 if not hasSpecialChar(r, current_col):
                     sum_col += int(matrix[r][current_col])
 
-            if sum_col > MAX_SUMMABLE_VALUE:
+            if sum_col > TARGET_VALUE:
                 break
 
-            if sum_col == MAX_SUMMABLE_VALUE:
+            if sum_col == TARGET_VALUE:
                 return True, edge_rows, current_col
 
         current_row = edge_rows
@@ -377,10 +402,10 @@ def checkSquareDown(rows: int, columns: int, start_r: int, start_c: int, matrix:
                 if not hasSpecialChar(current_row, c):
                     sum_row += int(matrix[current_row][c])
 
-            if sum_row > MAX_SUMMABLE_VALUE:
+            if sum_row > TARGET_VALUE:
                 break
 
-            if sum_row == MAX_SUMMABLE_VALUE:
+            if sum_row == TARGET_VALUE:
                 return True, current_row, edge_columns
 
         edge_rows += 1
@@ -389,7 +414,7 @@ def checkSquareDown(rows: int, columns: int, start_r: int, start_c: int, matrix:
 
     return False, 0, 0
 
-def sumsSquare():
+def findSumsSquare():
     for r in range(rows):
         for c in range(columns):
             if hasSpecialChar(r, c):
@@ -468,15 +493,17 @@ def configureHotkeys():
     print("f4. sums square")
     print("f5. scan matrix")
 
-    keyboard.add_hotkey('f5', getMatrixNumbers)
-    keyboard.add_hotkey('f3', sumsDown)
-    keyboard.add_hotkey('f2', sumsRight)
-    keyboard.add_hotkey('f4', sumsSquare)
+    keyboard.add_hotkey('f5', scanMatrix)
+    keyboard.add_hotkey('f3', findSumsDown)
+    keyboard.add_hotkey('f2', findSumsRight)
+    keyboard.add_hotkey('f4', findSumsSquare)
     keyboard.add_hotkey('f1', cleanSpecialCharactersFromMatrix)
 
     keyboard.add_hotkey("esc", lambda: QtWidgets.QApplication.quit())
     
     keyboard.wait()
+
+# TODO: Figure out gap match value to allow for matrix re-scanning
 
 if __name__ == "__main__":
     app = QApplication([])
